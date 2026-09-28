@@ -258,6 +258,9 @@ function updateLoadingProgress(phase, current, total) {
     } else if (phase === 'print') {
       detail.textContent = current + ' / ' + total + ' 页';
       if (text) text.textContent = '正在渲染打印...';
+    } else if (phase === 'flatten') {
+      detail.textContent = current + ' / ' + total + ' 页';
+      if (text) text.textContent = '正在转为兼容格式...';
     } else {
       detail.textContent = current + ' / ' + total;
       if (text) text.textContent = '正在处理...';
@@ -3964,6 +3967,8 @@ async function processTrim() {
     var f = S.files[i];
     if (f.previewUrl && !f.trimmedUrl) targets.push(f);
   }
+  // 无可裁剪项（已全部裁过 / 无图片）：直接返回，不发空批次 IPC，也不闪 loading
+  if (!targets.length) return;
   showLoading('裁剪白边...');
   try {
     // 一次 IPC 批量裁剪（Rust 内 rayon 并行），替代逐张串行 invoke：
