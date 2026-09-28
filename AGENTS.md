@@ -72,6 +72,13 @@ Rust generate_pdf_from_layout() — lopdf 直通管道 → 失败回退 printpdf
 
 - `get_cached_xobj()` 按 `(file_idx, rotation)` 缓存 XObject；Decoded 图片像素级烘焙旋转；JpegPassthrough 仅 0°/180° 直通（180° 用 PDF 层 `rotate_op` 补转，**仅限 JpegPassthrough**——Decoded 已烘焙，再转会双重旋转抵消）
 
+**老打印机兼容模式**（`settings.compat_flat`，issue #46，默认关）：
+
+- 生成完成后 `apply_compat_flat()` 把整份 PDF **逐页栅格化**（原地覆写）：PDFium 白底渲染 300dpi（`COMPAT_FLAT_DPI`，含标注/签章）→ PNG dataURL → JPEG → 重建 PDF 1.4 + **经典 xref 表**、每页一个 Image XObject 的纯位图 PDF
+- 目的：消除 SMask 透明、嵌入字体、对象流/交叉引用流——只认图元的老 RIP / 老打印机驱动不再丢字丢章，等效「Ghostscript 重写为 PDF 1.3」；代价是失去矢量锐度、文件变大，故只在设置里显式开启
+- 打印与「保存为 PDF」共用生成链，开启后一并生效；`compatFlat` 属**内容参数**，留在 `print.js` 缓存比较内（切换即失效缓存，勿加入 `_cacheExclude`）
+- 依赖 PDFium 组件（与静默打印同一个 DLL），未下载时返回可读错误
+
 ### 打印体系
 
 **四种模式**（`print.js doPrint` 分发，各自独立调用命令，不经隐式降级）：

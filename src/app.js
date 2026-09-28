@@ -82,6 +82,7 @@ var S = {
     fileListMemory: false,
     autoDedup: false,
     autoEnhance: false,
+    compatFlat: false,
     pasteMode: false, pasteBindLine: true, pasteShowSig: true
   }
 };
@@ -4058,6 +4059,8 @@ function getSettings() {
     footerText: S.feat.footer && !S.feat.pasteMode ? document.getElementById('footerText').value : '',
     footerMargin: (S.feat.pageNum || S.feat.printDate || S.feat.footer) ? (S.feat.customFM ? parseFloat(document.getElementById('footerMargin').value) || 0 : _autoFooterMargin()) : 0,
     customFm: S.feat.customFM,
+    // 老打印机兼容模式（issue #46）：生成后整页栅格化为位图 PDF，进缓存比较（切换即失效）
+    compatFlat: !!S.feat.compatFlat,
     copies: parseInt(document.getElementById('copies').value) || 1,
     collate: S.feat.collate, duplex: S.feat.duplex,
     printerName: document.getElementById('printerSel').value || null
@@ -4235,7 +4238,7 @@ function saveSettings() {
     printerName: document.getElementById('printerSel').value || null,
     feat: {}
   };
-  var featKeys = ['cutline','number','border','trimWhite','watermark','collate','duplex','pageNum','printDate','footer','autoOpenPdf','customFM','slotAdjMemory','fileListMemory','autoDedup','reimburse','copyBadge','autoEnhance','pasteMode','pasteBindLine','pasteShowSig'];
+  var featKeys = ['cutline','number','border','trimWhite','watermark','collate','duplex','pageNum','printDate','footer','autoOpenPdf','customFM','slotAdjMemory','fileListMemory','autoDedup','reimburse','copyBadge','autoEnhance','compatFlat','pasteMode','pasteBindLine','pasteShowSig'];
   featKeys.forEach(function(k) { o.feat[k] = S.feat[k]; });
   o.reimburseHeight = document.getElementById('reimburseHeight').value;
   o.trimPad = getTrimPad();
@@ -4375,6 +4378,7 @@ function loadSettings() {
       reimburse: 'toggleReimburse',
       copyBadge: 'toggleCopyBadge',
       autoEnhance: 'toggleAutoEnhance',
+      compatFlat: 'toggleCompatFlat',
       pasteMode: 'togglePasteMode',
       pasteBindLine: 'togglePasteBindLine',
       pasteShowSig: 'togglePasteSig'
@@ -4595,7 +4599,7 @@ function resetSettings(scope) {
   // scope='layout'：仅恢复「排版」页（纸张/行列/边距/间距/水印等），不动打印与偏好（issue #33）
   var layoutOnly = scope === 'layout';
   if (!confirm(layoutOnly ? '仅恢复「排版」页默认设置（纸张/行列/边距/间距/水印等），不影响打印、OCR、主题等偏好？' : '确认恢复所有默认设置？')) return;
-  var featDefaults = { cutline: true, number: false, border: false, trimWhite: false, trimPad: 3, watermark: false, footer: false, customFM: false, collate: true, duplex: false, pageNum: false, printDate: false, autoOpenPdf: true, ocrEnabled: false, pdfTextEnabled: true, slotAdjMemory: false, fileListMemory: false, autoDedup: false, reimburse: false, copyBadge: false, autoEnhance: false, pasteMode: false, pasteBindLine: true, pasteShowSig: true };
+  var featDefaults = { cutline: true, number: false, border: false, trimWhite: false, trimPad: 3, watermark: false, footer: false, customFM: false, collate: true, duplex: false, pageNum: false, printDate: false, autoOpenPdf: true, ocrEnabled: false, pdfTextEnabled: true, slotAdjMemory: false, fileListMemory: false, autoDedup: false, reimburse: false, copyBadge: false, autoEnhance: false, compatFlat: false, pasteMode: false, pasteBindLine: true, pasteShowSig: true };
   S.layout = { cols: 1, rows: 1 };
   if (layoutOnly) {
     ['cutline','number','border','trimWhite','watermark','reimburse','copyBadge','pasteMode'].forEach(function(k) { S.feat[k] = featDefaults[k]; });
@@ -4652,6 +4656,7 @@ function resetSettings(scope) {
   if (!layoutOnly) {
     document.getElementById('toggleAutoEnhance').classList.remove('on');
     document.getElementById('enhanceOpts').style.display = 'none';
+    document.getElementById('toggleCompatFlat').classList.remove('on');
     document.getElementById('togglePasteBindLine').classList.add('on');
     document.getElementById('togglePasteSig').classList.add('on');
     document.getElementById('pasteOpts').style.display = 'none';
