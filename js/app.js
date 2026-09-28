@@ -2340,6 +2340,12 @@ function maybeAutoTrim() {
 }
 
 async function processTrim() {
+  // 无可裁剪项（已全部裁过 / 无图片）：直接返回，不闪 loading，也不弹无意义的「裁剪完成」
+  var hasTarget = false;
+  for (var k = 0; k < S.files.length; k++) {
+    if (S.files[k].previewUrl && !S.files[k].trimmedUrl) { hasTarget = true; break; }
+  }
+  if (!hasTarget) return;
   showLoading('裁剪白边...');
   try {
     for (var i = 0; i < S.files.length; i++) {
