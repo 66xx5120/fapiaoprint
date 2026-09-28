@@ -423,11 +423,17 @@ fn build_svg_text(
     // DeltaX or DeltaY alone is enough to require per-char positioning; a DeltaY-only
     // object (multi-line without horizontal increments) must not fall back to plain text.
     let has_delta = (!text_obj.delta_x.is_empty() || !text_obj.delta_y.is_empty()) && chars.len() > 1;
-    // 数电票 TextCode 的空格是列分隔符而非字形：表头把多个列标题拼进一条
-    // TextCode（如"车牌号车辆类型 通行日期起…"），DeltaX 数组按去空格后的
-    // 字符序列对齐。若把空格当字形消费 DeltaX，后续所有列跳（50~70 设计
-    // 单位）会整体错位一个字符，字距被拉爆。逐字定位时跳过空白字符。
+    // 逐字定位的字符序列要与 DeltaX 对齐，各生成器口径不一，按长度判定：
+    // ① 空格是列分隔符（数电票表头把多列标题拼成一条 TextCode，如"车牌号车辆类型 通行日期起…"，
+    //    DeltaX 按去空格后的序列对齐）——若把空格当字形消费 DeltaX，列跳（50~70 设计单位）
+    //    会整体错位一个字符，字距被拉爆；
+    // ② 空格是字型（部分生成器把空格也算进 DeltaX，issue #44）。
+    // 优先匹配口径①以保持既有票样行为不变，只有口径①明显对不上时才切到口径②。
     let vis: Vec<char> = chars.iter().copied().filter(|c| !c.is_whitespace()).collect();
+    let dx_len = text_obj.delta_x.len();
+    let fits_vis = dx_len + 1 == vis.len() || dx_len == vis.len();
+    let fits_all = dx_len + 1 == chars.len() || dx_len == chars.len();
+    let seq: Vec<char> = if !fits_vis && fits_all { chars.clone() } else { vis };
     // We'll build the tspans later, after we know the base_x coordinate.
     // For now, just store the char data.
 
@@ -436,11 +442,11 @@ fn build_svg_text(
         // CTM text: x is in local coords (text_x * scale)
         let base_x = text_obj.text_x * scale_x;
         let base_y = text_obj.text_y * scale_y;
-        let content = if has_delta && vis.len() > 1 {
-            let mut s = format!("<tspan x=\"{:.4}\" y=\"{:.4}\">{}</tspan>", base_x, base_y, esc_xml(&vis[0].to_string()));
+        let content = if has_delta && seq.len() > 1 {
+            let mut s = format!("<tspan x=\"{:.4}\" y=\"{:.4}\">{}</tspan>", base_x, base_y, esc_xml(&seq[0].to_string()));
             let mut x_pos = base_x;
             let mut y_pos = base_y;
-            for (i, ch) in vis.iter().enumerate().skip(1) {
+            for (i, ch) in seq.iter().enumerate().skip(1) {
                 let dx = if i - 1 < text_obj.delta_x.len() {
                     text_obj.delta_x[i - 1]
                 } else {
@@ -478,11 +484,11 @@ fn build_svg_text(
     // Normal: position = Boundary + TextCode offset (absolute SVG coords)
     let base_x = (text_obj.boundary.0 + text_obj.text_x) * scale_x;
     let base_y = (text_obj.boundary.1 + text_obj.text_y) * scale_y;
-    let content = if has_delta && vis.len() > 1 {
-        let mut s = format!("<tspan x=\"{:.4}\" y=\"{:.4}\">{}</tspan>", base_x, base_y, esc_xml(&vis[0].to_string()));
+    let content = if has_delta && seq.len() > 1 {
+        let mut s = format!("<tspan x=\"{:.4}\" y=\"{:.4}\">{}</tspan>", base_x, base_y, esc_xml(&seq[0].to_string()));
         let mut x_pos = base_x;
         let mut y_pos = base_y;
-        for (i, ch) in vis.iter().enumerate().skip(1) {
+        for (i, ch) in seq.iter().enumerate().skip(1) {
             let dx = if i - 1 < text_obj.delta_x.len() {
                 text_obj.delta_x[i - 1]
             } else {
