@@ -6208,6 +6208,12 @@ fn generate_pdf_passthrough(
     let ph_pt = ph * MM_TO_PT;
 
     let mut output_doc = lopdf::Document::with_version("1.4");
+    // lopdf 新建文档默认写「交叉引用流」（CrossReferenceStream，PDF 1.5 特性），
+    // 而本文件头声明 1.4——声明与结构不符，只认经典 xref 表的老 RIP/老打印机
+    // 解析不了整个文件（丢元素甚至空白页，issue #46）。这里强制写经典 xref 表；
+    // printpdf 回退管道自身就是 1.3 + xref 表（printpdf 0.9 serialize.rs），两条
+    // 管道保持一致。
+    output_doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
 
     // Cache loaded source PDFs by path
     let mut source_cache: std::collections::HashMap<String, lopdf::Document> = std::collections::HashMap::new();

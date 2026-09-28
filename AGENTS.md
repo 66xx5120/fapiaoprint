@@ -240,6 +240,7 @@ Rust generate_pdf_from_layout() — lopdf 直通管道 → 失败回退 printpdf
 - **批量文字提取**：多 PDF 必须按 pdfPath 分组调 `extract_pdf_texts`；返回 `HashMap<u32, PdfTextResult>` keyed by pageIdx，前端按 `r._pdfPageIdx` 取结果
 - **旋转方向**：全链路约定见「旋转与适配语义」小节——最易错点是 PDF 矩阵方向与 CSS 相反、pdf-lib 绕锚点旋转
 - **ureq 的 TLS 后端必须显式注入**（v2.6.4 线上事故，issue #37①）：`features = ["native-tls"]` 只是让 native-tls 适配器可用，**不会**成为默认 TLS 后端。未启用 `tls`(rustls) feature 时 `default_tls_config()` 返回一个直接报错的桩，于是**全部 https 请求**都以 `cannot make HTTPS request because no TLS backend is configured` 失败（更新检查、PDFium / SumatraPDF 下载同时报废）。所有 http 请求一律经 `build_http_agent()` 建 agent，不要裸建 `ureq::AgentBuilder`
+- **新建 lopdf 文档必须显式设经典 xref 表**（issue #46）：`Document::new()` / `with_version()` 的 `reference_table.cross_reference_type` 默认是 `CrossReferenceStream`（PDF 1.5 特性），而 `save_to()` 会照此写出——文件头声明 1.4 却在用 1.5 结构，只认经典 `xref` 表的老 RIP / 老打印机驱动解析不了整个文件（丢元素甚至空白页）。直通管道已强制 `lopdf::xref::XrefType::CrossReferenceTable`；printpdf 回退管道自身就写 1.3 + xref 表（printpdf 0.9 `serialize.rs`），两条管道需保持一致
 
 ## 硬性规则速查
 
