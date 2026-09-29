@@ -240,6 +240,8 @@ Rust generate_pdf_from_layout() — lopdf 直通管道 → 失败回退 printpdf
 - ImageMask 遮罩：二值图合成主图 alpha 通道
 - 自闭合标签不能用 `read_element_text()`
 - CJK 拆字（dzcp 格式）：需虚拟标签合成
+- **TextCode 转义与占位符**（issue #44）：`\XXXX` 四位十六进制转义（标准要求空格等一律转义）必须解码，否则按字面 5 字符渲染；`¤`（U+00A4）是标准占位符——参与 ΔX 定位（占一个字符槽位）但**不渲染字形**，直接输出会与相邻字符叠字
+- **DeltaX 逐字定位的口径判定**（issue #44）：空格是否参与 ΔX 各生成器不一（`单··位` 4 字符配 3 个 ΔX=参与；数电票表头列分隔=不参与）。主判据 **Boundary 宽自校验**——ΔX 累加和应≈文字总宽（残差一个末字宽），两口径误差差 2 倍以上才切换；**CTM 含缩放时 ΔX 与 Boundary 不同坐标尺度（如 0.2367），必须退回长度拟合**（`invoice-engine/src/lib.rs` `build_svg_text`）
 
 ### 其他
 
