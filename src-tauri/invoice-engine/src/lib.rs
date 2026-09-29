@@ -415,18 +415,18 @@ fn normalize_font_name(raw: &str) -> String {
     }.to_string()
 }
 
+/// GB/T 33190 表45：TextCode 作为占位符使用时，一律采用 ¤（U+00A4）占位
+const OFD_PLACEHOLDER: char = '\u{A4}';
+
 /// 占位符判定：占一个字符槽位参与 ΔX 定位，但**不渲染字形**——直接输出会与相邻字符叠字
 /// （issue #44 的「月¤」叠字）。
-/// - `¤`（U+00A4）：GB/T 33190 规定的占位符
-/// - 圆圈类符号（Ø ø ∅ ⌀ ⊘ Φ Ф ϕ）：厂商混用的非标占位（issue #47 截图里「月」旁那个细笔画
-///   圆圈＝字体回退画出来的占位符，不是正文 CJK 字体的 ¤）；中文票据正文不会出现这些符号
+/// - `¤`（U+00A4）：国标占位符
 /// - PUA 码位（U+E000–U+F8FF 等）：字形索引类编码，用系统字体渲染必出乱码
+/// 注意：**不要**把 Ø/∅/Φ 之类圆圈符号也拉进黑名单——issue #47 那个「月Ø」已查明是
+/// 「数字 0 被 ΔX 错位挤到「月」的竖笔上」，与占位符无关；乱扩名单会误伤正文。
 fn is_placeholder(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{A4}' | '\u{D8}' | '\u{F8}' | '\u{2205}' | '\u{2300}' | '\u{2298}'
-            | '\u{3A6}' | '\u{424}' | '\u{3D5}'
-    ) || ('\u{E000}'..='\u{F8FF}').contains(&ch)
+    ch == OFD_PLACEHOLDER
+        || ('\u{E000}'..='\u{F8FF}').contains(&ch)
         || ('\u{F0000}'..='\u{FFFFD}').contains(&ch)
         || ('\u{100000}'..='\u{10FFFD}').contains(&ch)
 }
@@ -538,28 +538,24 @@ fn build_svg_text_line(
     // object (multi-line without horizontal increments) must not fall back to plain text.
     let has_delta = (!delta_x.is_empty() || !delta_y.is_empty()) && chars.len() > 1;
     // 逐字定位的字符序列要与 DeltaX 对齐，各生成器口径不一：
-    // ① 空格参与定位（移动话费票样：'单··位' 4 字符配 3 个 ΔX，按含空格序列对齐）；
+    // ① 空格参与定位（规范口径：表45「文字内容中出现的空格也需要转义」，空格是内容的一部分；
+    //    移动话费票样 '单··位' 4 字符配 3 个 ΔX 即此口径）；
     // ② 空格是列分隔符（数电票表头把多列标题拼进一条 TextCode，如
-    //    "车牌号车辆类型 通行日期起…"，ΔX 按去空格后的序列对齐）。
-    // 主判据：Boundary 宽自校验——ΔX 累加和应≈文字总宽（残差为一个末字宽），
-    // 两口径误差通常差 2 倍以上，可靠区分；仅当 CTM 无缩放/旋转（ΔX 与 Boundary
-    // 同坐标尺度）时可用。判据不明确或 CTM 含缩放时退回长度拟合（保持旧行为）。
+    //    "车牌号车辆类型 通行日期起…"，ΔX 按去空格后的序列对齐，属厂商偏差）。
+    // 主判据：Boundary 宽自校验——ΔX 累加和应≈文字总宽（残差为一个末字宽），两口径误差
+    // 差 2 倍以上才切换。表46：X/Y 是「对象坐标系」下的坐标，ΔX/ΔY 与 Boundary 同处
+    // 该坐标系 → **CTM 含缩放不构成跳过本校验的理由**（issue #47 的不动产证就栽在这里：
+    // 恰好一个空格时两种口径的 ΔX 条数都能对上，长度拟合无区分力，只能靠本校验）。
+    // 两口径误差接近（数组与 Boundary 自身不自洽，如数电票表头样本）时判定不生效，
+    // 退回长度拟合（保持旧行为）。
     let vis: Vec<char> = chars.iter().copied().filter(|c| !c.is_whitespace()).collect();
     let dx_len = delta_x.len();
     let fits_vis = dx_len + 1 == vis.len() || dx_len == vis.len();
     let fits_all = dx_len + 1 == chars.len() || dx_len == chars.len();
-    // CTM 为平移/单位变换时坐标尺度一致可做 Boundary 校验；含缩放/旋转（如
-    // "0.2367 0 0 0.2367 0 0"）时 ΔX 在局部坐标、Boundary 在页面坐标，不可比。
-    let ctm_unit = match text_obj.ctm {
-        None => true,
-        Some((a, b, c, d, _, _)) => {
-            (a - 1.0).abs() < 0.01 && (d - 1.0).abs() < 0.01 && b.abs() < 0.01 && c.abs() < 0.01
-        }
-    };
     let boundary_w = text_obj.boundary.2;
     let seq: Vec<char> = {
         let mut chosen: Option<bool> = None; // true=口径①含空格, false=口径②去空格
-        if ctm_unit && boundary_w > 0.0 && !delta_x.is_empty() && chars.len() != vis.len() {
+        if boundary_w > 0.0 && !delta_x.is_empty() && chars.len() != vis.len() {
             let err_all = delta_sum_err(chars.len(), delta_x, boundary_w);
             let err_vis = delta_sum_err(vis.len(), delta_x, boundary_w);
             // 需一方误差有限且小于对方 70% 才切换，避免 Boundary 不精确时误判
@@ -3203,9 +3199,25 @@ mod tests {
     }
 
     #[test]
-    fn test_ofd_deltax_scaled_ctm_falls_back_to_length() {
-        // CTM 含缩放时 Boundary 与 ΔX 不同坐标尺度，Boundary 校验必须跳过、退回长度拟合
-        // （「车牌号…」式表头：ΔX 个数同时匹配两种口径 → 保持去空格口径，27 个 tspan）
+    fn test_ofd_deltax_included_with_scaled_ctm() {
+        // issue #47 场景：单空格 + 含空格口径 ΔX + CTM 含缩放（不动产证）。
+        // 表46 规定 ΔX/Boundary 同处对象坐标系 → CTM 缩放不影响 Boundary 自校验；
+        // 恰好一个空格时长度拟合无区分力（两种口径条数都对得上），只有本校验能救回来。
+        let mut dx = vec![3.175; 5];
+        dx.extend(std::iter::repeat(1.5875).take(18));
+        let t = ofd_text(
+            "缴费时间：2026-03-26 14:33:36", 46.0375, 3.175, dx,
+            Some((0.2367, 0.0, 0.0, 0.2367, 0.0, 0.0)),
+        );
+        let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+        assert_eq!(svg.matches("<tspan").count(), 24, "含空格口径：空格占一个 ΔX 槽位");
+    }
+
+    #[test]
+    fn test_ofd_deltax_inconsistent_array_falls_back_to_length() {
+        // 「车牌号…」式表头样本：ΔX（27 条 ×12）与 Boundary（139.403）自身不自洽，
+        // 两种口径误差都很大（184.6 vs 172.6）→ 判定不生效、退回长度拟合
+        // （ΔX 条数同时匹配两种口径 → 保持去空格口径，27 个 tspan）
         let t = ofd_text(
             "车牌号车辆类型 通行日期起通行日期止金额税率/征收率税额",
             139.403, 12.0, vec![12.0; 27],
@@ -3226,14 +3238,19 @@ mod tests {
     }
 
     #[test]
-    fn test_ofd_placeholder_family_not_rendered() {
-        // 非标占位符（厂商混用的圆圈类符号）与 PUA 字形码位：同样只占 ΔX 槽位、不渲染字形
-        // （issue #47 截图里「1月Ø 5日」那个细笔画圆圈＝字体回退画的占位符，非国标 ¤）
-        for ch in ['\u{D8}', '\u{F8}', '\u{2205}', '\u{2300}', '\u{2298}', '\u{3A6}', '\u{424}', '\u{3D5}', '\u{E123}'] {
+    fn test_ofd_placeholder_and_pua_not_rendered() {
+        // 占位符只认国标 ¤（表45）与 PUA 字形码位（系统字体渲染必乱码）：只占 ΔX 槽位、不渲染字形。
+        // Ø/∅/Φ 必须照常渲染——issue #47 的「月Ø」已查明是 ΔX 错位挤过去的数字 0，不是占位符
+        for ch in ['\u{A4}', '\u{E123}', '\u{F0001}'] {
             let t = ofd_text(&format!("1月{ch}"), 6.35, 3.175, vec![3.175, 3.175], None);
             let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
             assert!(!svg.contains(ch), "占位符 {ch:?} 不应渲染字形: {svg}");
             assert_eq!(svg.matches("<tspan").count(), 3, "占位符仍占 ΔX 槽位: {svg}");
+        }
+        for ch in ['\u{D8}', '\u{2205}', '\u{3A6}'] {
+            let t = ofd_text(&format!("1月{ch}"), 6.35, 3.175, vec![3.175, 3.175], None);
+            let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+            assert!(svg.contains(ch), "圆圈类符号是正文，不能当占位符滤掉: {ch:?} {svg}");
         }
     }
 
