@@ -243,6 +243,10 @@ Rust generate_pdf_from_layout() — lopdf 直通管道 → 失败回退 printpdf
 - **TextCode 转义与占位符**（issue #44）：`\XXXX` 四位十六进制转义（标准要求空格等一律转义）必须解码，否则按字面 5 字符渲染；`¤`（U+00A4）是标准占位符——参与 ΔX 定位（占一个字符槽位）但**不渲染字形**，直接输出会与相邻字符叠字
 - **DeltaX 逐字定位的口径判定**（issue #44）：空格是否参与 ΔX 各生成器不一（`单··位` 4 字符配 3 个 ΔX=参与；数电票表头列分隔=不参与）。主判据 **Boundary 宽自校验**——ΔX 累加和应≈文字总宽（残差一个末字宽），两口径误差差 2 倍以上才切换；**CTM 含缩放时 ΔX 与 Boundary 不同坐标尺度（如 0.2367），必须退回长度拟合**（`invoice-engine/src/lib.rs` `build_svg_text`）
 
+### OCR / MNN
+
+- **本地手工放置的 MNN 预编译缓存会把 exe 静默链成动态依赖**（v2.6.10 本地事故）：ocr-rs 的 `build.rs` 只在「**全新下载解压后**」把 `MNN.lib` 替换为静态库 `MNN_static.lib`；一旦命中已存在的缓存目录就直接早退、跳过替换。若把官方预编译 zip 手工解压到 `~/.cargo/registry/src/*/ocr-rs-*/3rd_party/prebuilt/mnn-dev-windows-x86_64/lib/`，那里的 `MNN.lib`（438KB）是 **DLL 导入库**，于是 `cargo:rustc-link-lib=static=MNN` 实际产出依赖 `MNN.dll` 的 exe —— 装上启动即报「找不到 MNN.dll」（build.rs 的 `remove_dynamic_libs()` 还会把该目录里的 DLL 删掉，更找不到）。修法：解压后 `MNN.lib` → `MNN_import.lib`，再复制 `MNN_static.lib` → `MNN.lib`（即 build.rs 下载路径做的事），然后 **`cargo clean -p ocr-rs` 强制重链接**（cargo 不知道 lib 被换过，否则重建是空操作）。校验：OCR 版 exe 二进制内**不得**出现 `MNN.dll` 字符串（CI 产物为静态链接，无此依赖；轻量版不受影响）
+
 ### 其他
 
 - **EXIF**：`image` crate 不自动应用；6=90°CW、8=90°CCW、3=180°
