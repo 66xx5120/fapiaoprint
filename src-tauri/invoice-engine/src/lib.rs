@@ -3144,6 +3144,18 @@ mod tests {
         assert!(svg.contains(">月</tspan>"));
         assert_eq!(svg.matches("<tspan").count(), 3);
     }
+
+    #[test]
+    fn test_ofd_deltax_space_excluded_by_boundary() {
+        // Boundary 校验选「去空格」口径的正例：ΔX 数须多于 vis-1，含空格口径才会
+        // 多消费 ΔX 拉开误差——dx=[10,50]、bw=11 时 err_vis=1 vs err_all=49，
+        // 应剔除空格 → 2 个 tspan（A、B），且不渲染空格字形
+        let t = ofd_text("A B", 11.0, 3.0, vec![10.0, 50.0], None);
+        let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+        assert_eq!(svg.matches("<tspan").count(), 2);
+        assert!(svg.contains(">A</tspan>") && svg.contains(">B</tspan>"));
+        assert!(!svg.contains("> </tspan>"), "空格不应渲染为字形");
+    }
 }
 
 #[cfg(test)]
