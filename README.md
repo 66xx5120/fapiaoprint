@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)]()
 [![Tauri 2.x](https://img.shields.io/badge/Tauri-2.x-orange.svg)]()
-[![Version](https://img.shields.io/badge/Version-2.6.9-blue.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.6.10-blue.svg)]()
 
 轻量桌面应用，专为批量打印电子发票设计。支持 PDF、OFD、图片等多格式导入，智能排版，一键打印或导出。
 
@@ -18,6 +18,8 @@
 OFD（开放版式文档）是国家标准电子发票格式，本工具提供原生完整支持 — 矢量渲染、发票信息直提、印章保真，拖入即用，无需 OCR。
 
 > ⚠️ 不同厂商/转换工具生成的 OFD 发票格式存在差异（如税务原版 OFD、iloveofd 转换、dzcp 公共服务平台等），如遇解析渲染问题请及时反馈，我们会持续适配。
+
+- **文字定位兼容**（v2.6.10，issue #44）：兼容「空格参与字距」与「空格是列分隔」两种 DeltaX 写法（Boundary 边界宽自校验自动判定），`\XXXX` 十六进制转义按国标解码，`¤` 占位符参与定位但不渲染——各厂商生成的 OFD 文字不再错位 / 错码 / 叠字
 
 ### 📥 文件管理
 
@@ -82,6 +84,7 @@ OFD（开放版式文档）是国家标准电子发票格式，本工具提供�
 - **印章烘焙**（v2.0.4）：生成 PDF 时自动将原票印章/签章标注烘焙到输出，印章位置/大小与原票一致
 - **份数控制**：全局 + 单张份数，逐份 / 逐页打印，双面打印，彩色 / 灰度 / 黑白
 - **PDF 导出**：自动打开或自定义保存目录
+- **老打印机兼容模式**（v2.6.10，issue #46，默认关）：开启后打印 / 保存的 PDF 整页栅格化为纯位图 PDF（PDF 1.4 + 经典 xref 表，无透明 / 无嵌入字体），老式打印机不再丢字、丢章，等效「Ghostscript 重写为 PDF 1.3」；需 PDFium 组件
 - **确认弹窗**：打印前显示发票数量 / 版面 / 纸张 / 打印机 / 引擎 / 份数，防止误操作
 
 ### 🎨 界面
@@ -264,6 +267,7 @@ npm run bump 1.9.8   # 同步 package.json → Cargo.toml → tauri.conf.json
 - [x] 多页发票逻辑票聚合（跨页统计只计合计页、去重整组感知）+ 续页徽章 + 医疗收费票据专类（v2.6.7）
 - [x] 单票工具条越界贴边修复（左右钳制）+ 工具条一键删除（v2.6.8）
 - [x] OCR 链路提速（命令异步化 + 按目标像素渲染 + 文字层结算后再排队）+ 工具条按格子归位（v2.6.9）
+- [x] 老打印机兼容模式（整页栅格化，issue #46）+ OFD 文字定位三修（转义 / 占位符 / DeltaX 口径，issue #44）+ 预览页居中（issue #45）+ 批量加载提速（v2.6.10）
 
 ## 🤖 关于此项目
 
