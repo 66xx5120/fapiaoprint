@@ -200,6 +200,8 @@ Rust generate_pdf_from_layout() — lopdf 直通管道 → 失败回退 printpdf
 
 **文件命令**（均为 `async fn` + `spawn_blocking`）：`copy_file`、`rename_file`（同盘原子 rename，跨盘 copy+delete）。
 
+**诊断导出**（右键菜单「📤 导出诊断信息」，issue #47 配套）：`diagnostics.rs` 的 `export_diagnostics` 生成「脱敏结构报告」供用户直接贴进 issue——用于替代「截图猜 + 反复要样本」。硬约束：**任何用户原文不得出现**——文本经 `invoice_engine::sanitize_text`（汉字→汉 / 数字→9 / 字母→A / 空格→·，标点保留、长度与字符类型序列完整）、文件名脱敏（去目录、保留扩展名）；结构数据原样（OFD 的 TextObject/ΔX/ΔY 数组、PDF 词级坐标、XML 字段有无、图片尺寸）。前端 `buildDiagSummary` 只允许布尔/枚举等固定词汇（该部分不脱敏）；报告 512KB 截断（按 char 边界）；报告头部含版本/构建/导出时间（时间由前端格式化传入）。
+
 ### 设置持久化与更新检查
 
 **设置持久化**：`saveSettings()`/`loadSettings()` — `ticketchan-settings` JSON，覆盖排版/纸张/边距/缩放/旋转/水印/页脚/筛选/视图等；`updatePreview()` 500ms 防抖自动保存；恢复默认清空全部。⚠️ **var 提升坑**：被 `loadSettings()` 恢复的 JS 变量的 `var x = 默认值` 声明必须在调用点之前（声明提升、赋值不提升，曾致 issue #7）。

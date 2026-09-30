@@ -2355,6 +2355,118 @@ fn is_common_label(text: &str) -> bool {
 // Public API
 // =====================================================
 
+// =====================================================
+// Diagnostics（诊断导出）— 渲染/识别问题可一键导出结构数据（脱敏）
+// =====================================================
+
+/// 诊断导出用文本脱敏：汉字→汉、数字→9、字母→A、空白→·，标点符号原样保留。
+/// 报告会经 GitHub issue 公开传递，原文（金额/名称/号码等）绝不能出现在其中；
+/// 保留长度与「字符类型序列」是定位排版问题所需的最小信息。
+pub fn sanitize_text(s: &str) -> String {
+    s.chars()
+        .map(|ch| {
+            let cp = ch as u32;
+            if matches!(cp, 0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF) {
+                '汉' // CJK 汉字（基本区 / 扩展A / 兼容区）
+            } else if ch.is_numeric() {
+                '9' // 含全角数字等各语言数字
+            } else if ch.is_alphabetic() {
+                'A' // 非 CJK 字母（全角字母、希腊/西里尔等）
+            } else if ch.is_whitespace() {
+                '·'
+            } else {
+                ch // 标点、符号原样
+            }
+        })
+        .collect()
+}
+
+fn fmt_arr(a: &[f64]) -> String {
+    a.iter().map(|v| format!("{:.4}", v)).collect::<Vec<_>>().join(" ")
+}
+
+fn push_textcode_line(out: &mut String, x: f64, y: f64, dx: &[f64], dy: &[f64], text: &str) {
+    let mut line = format!("    TextCode X={:.4} Y={:.4}", x, y);
+    if !dx.is_empty() {
+        line.push_str(&format!(" DeltaX=\"[{}个] {}\"", dx.len(), fmt_arr(dx)));
+    }
+    if !dy.is_empty() {
+        line.push_str(&format!(" DeltaY=\"[{}个] {}\"", dy.len(), fmt_arr(dy)));
+    }
+    line.push_str(&format!(" 文本({}字)=\"{}\"\n", text.chars().count(), sanitize_text(text)));
+    out.push_str(&line);
+}
+
+/// 诊断导出：把 OFD 各页 Content.xml 的排版结构 dump 为脱敏文本
+/// （TextObject 的 Boundary/Font/Size/CTM + 每个 TextCode 的 X/Y/ΔX/ΔY + 脱敏文本）。
+/// ΔX/ΔY 数组完整保留——逐字定位错乱正是靠这份数据本地复现定位的。
+pub fn dump_ofd_structure(ofd_path: &str) -> Result<String, String> {
+    let file = std::fs::File::open(ofd_path).map_err(|e| format!("打开OFD文件失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析OFD ZIP失败: {}", e))?;
+    let mut names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter(|n| n.ends_with("Content.xml"))
+        .collect();
+    names.sort();
+    let mut out = String::new();
+    for name in &names {
+        let xml = match zip_read_str(&mut archive, name) {
+            Some(x) => x,
+            None => continue,
+        };
+        let (texts, paths, imgs) = parse_ofd_content(&xml);
+        out.push_str(&format!("[页面结构] {}\n", name));
+        out.push_str(&format!(
+            "  对象统计: 文本 {} · 路径 {} · 图像 {}\n",
+            texts.len(),
+            paths.len(),
+            imgs.len()
+        ));
+        for t in &texts {
+            let ctm = t.ctm.map(|m| {
+                format!(" CTM=\"{:.4} {:.4} {:.4} {:.4} {:.4} {:.4}\"", m.0, m.1, m.2, m.3, m.4, m.5)
+            }).unwrap_or_default();
+            out.push_str(&format!(
+                "  TextObject#{} Font={} Size={:.4} Boundary=\"{:.4} {:.4} {:.4} {:.4}\" Weight={}{}\n",
+                t.id, t.font_id, t.size, t.boundary.0, t.boundary.1, t.boundary.2, t.boundary.3, t.weight, ctm
+            ));
+            if t.segments.is_empty() {
+                push_textcode_line(&mut out, t.text_x, t.text_y, &t.delta_x, &t.delta_y, &t.text);
+            } else {
+                for seg in &t.segments {
+                    push_textcode_line(&mut out, seg.text_x, seg.text_y, &seg.delta_x, &seg.delta_y, &seg.text);
+                }
+            }
+        }
+        // 路径/图像对文字错乱诊断价值有限：给前 10 个（ID/Boundary）即可
+        for p in paths.iter().take(10) {
+            out.push_str(&format!(
+                "  PathObject#{} Boundary=\"{:.4} {:.4} {:.4} {:.4}\" LineWidth={:.4}\n",
+                p.id, p.boundary.0, p.boundary.1, p.boundary.2, p.boundary.3, p.line_width
+            ));
+        }
+        if paths.len() > 10 {
+            out.push_str(&format!("  …其余 {} 个 PathObject 略\n", paths.len() - 10));
+        }
+        for im in imgs.iter().take(10) {
+            out.push_str(&format!(
+                "  ImageObject#{} Boundary=\"{:.4} {:.4} {:.4} {:.4}\" Res={}\n",
+                im.id, im.boundary.0, im.boundary.1, im.boundary.2, im.boundary.3, im.resource_id
+            ));
+        }
+        if imgs.len() > 10 {
+            out.push_str(&format!("  …其余 {} 个 ImageObject 略\n", imgs.len() - 10));
+        }
+        out.push('\n');
+    }
+    if out.is_empty() {
+        out.push_str("（未找到 Content.xml）\n");
+    }
+    Ok(out)
+}
+
+// =====================================================
+
 /// Parse OFD file: returns SVG vector rendering + structured invoice data from XML.
 /// Skips OCR — invoice fields are extracted directly from OFD metadata.
 ///
@@ -3322,6 +3434,35 @@ mod tests {
         assert_eq!(texts[0].segments[1].text_y, 5.0, "缺省 Y 沿用上一个 TextCode 的 Y");
         let svg = build_svg_text(&texts[0], &HashMap::new(), &HashMap::new(), 1.0, 1.0);
         assert!(svg.contains("<text x=\"17\""), "段 2 用继承坐标（7 + Boundary 10）: {svg}");
+    }
+
+    #[test]
+    fn test_sanitize_text_keeps_structure() {
+        // 诊断导出脱敏：汉字→汉、数字→9、字母→A、空白→·，标点原样保留（长度与结构不变）
+        assert_eq!(sanitize_text("2021年11月05日"), "9999汉99汉99汉");
+        assert_eq!(sanitize_text("城镇住宅用地"), "汉汉汉汉汉汉");
+        assert_eq!(sanitize_text("A1 中文"), "A9·汉汉");
+        // 金额 + 全角标点：小数点/括号保留，㎡（符号类）原样
+        assert_eq!(sanitize_text("（87.76㎡）"), "（99.99㎡）");
+        assert_eq!(sanitize_text("1月\u{A4}"), "9汉\u{A4}");
+    }
+
+    #[test]
+    fn test_dump_ofd_structure_sample() {
+        // 诊断 dump：结构 + ΔX 数组完整输出，但原文绝不出现（sample 标题含「通行费」）
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sample/高速通行费ofd.ofd");
+        if !std::path::Path::new(path).exists() {
+            return; // sample 缺失时跳过（不作为 CI 硬依赖）
+        }
+        let dump = dump_ofd_structure(path).expect("dump 应成功");
+        // 人工核查 dump 格式：cargo test test_dump_ofd_structure_sample -- --nocapture
+        for line in dump.lines().take(10) {
+            println!("{line}");
+        }
+        assert!(dump.contains("TextObject#"), "应含 TextObject 结构");
+        assert!(dump.contains("DeltaX="), "应含 DeltaX 数组");
+        assert!(dump.contains("汉"), "文本应经脱敏输出");
+        assert!(!dump.contains("通行费"), "原始文本不得出现在诊断输出中");
     }
 }
 
