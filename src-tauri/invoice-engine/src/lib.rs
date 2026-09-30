@@ -566,7 +566,16 @@ fn build_svg_text_line(
     let fits_vis = dx_len + 1 == vis.len() || dx_len == vis.len();
     let fits_all = dx_len + 1 == chars.len() || dx_len == chars.len();
     let boundary_w = text_obj.boundary.2;
-    let seq: Vec<char> = {
+    // 多行逐字定位（issue #47 附记栏）：ΔX 中出现**负值＝换行回退**，说明 ΔX 是按含空格的
+    // 完整字符流逐字生成的（回退量等于该行已推进的宽度，只有完整流才对得上）。此类文本
+    // ΔX 累加和天然 ≠ Boundary 宽（每行宽 ≤ boundary、行间还有负回退），Boundary 自校验失效；
+    // 而 ΔX 条数又常同时吻合两种口径（该文件恰好 1 个空格：131 字符配 130 ΔX 满足含空格口径，
+    // 去空格后 130 字符也"凑巧"吻合）→ 长度拟合会误选去空格口径，换行点后移一个字符
+    // （「2」被留在上一行行尾）。故含换行回退时直接按完整字符流渲染。
+    let multiline = delta_x.iter().any(|&v| v < 0.0);
+    let seq: Vec<char> = if multiline && fits_all {
+        chars.clone()
+    } else {
         let mut chosen: Option<bool> = None; // true=口径①含空格, false=口径②去空格
         if boundary_w > 0.0 && !delta_x.is_empty() && chars.len() != vis.len() {
             let err_all = delta_sum_err(chars.len(), delta_x, boundary_w);
@@ -3405,6 +3414,22 @@ mod tests {
         assert_eq!(svg.matches("<tspan").count(), 2);
         assert!(svg.contains(">A</tspan>") && svg.contains(">B</tspan>"));
         assert!(!svg.contains("> </tspan>"), "空格不应渲染为字形");
+    }
+
+    #[test]
+    fn test_ofd_multiline_negative_deltax_uses_full_charset() {
+        // issue #47 附记栏：多行逐字定位（ΔX 含**换行回退负值**），且 ΔX 条数同时吻合两种口径
+        // （真实文件 131 字符 + 1 空格配 130 ΔX：含空格口径 131-1=130 ✓，去空格后 130 字符
+        // 又"凑巧"= 130 ✓）→ Boundary 自校验因多行累加和 ≠ boundary 宽而失效，长度拟合
+        // 便误选去空格口径，换行点后移一个字符（「2」被留在上一行行尾、「、」跑到下一行行首）。
+        // 含换行回退时按完整字符流渲染，换行落在正确字符上。
+        let mut t = ofd_text("甲乙 丙丁", 5.0, 2.0, vec![2.0, 1.0, -6.0, 2.0], None);
+        t.delta_y = vec![0.0, 0.0, 5.0, 0.0];
+        let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+        assert_eq!(svg.matches("<tspan").count(), 5, "含空格口径：5 个字符各占一个 tspan: {svg}");
+        let tspans: Vec<&str> = svg.split("<tspan").skip(1).collect();
+        assert!(tspans[3].contains("y=\"5.0000\""), "换行应落在第 4 个字符上: {svg}");
+        assert!(tspans[2].contains("y=\"0.0000\""), "第 3 个字符仍在首行: {svg}");
     }
 
     #[test]
