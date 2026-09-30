@@ -452,6 +452,19 @@ fn delta_sum_err(seq_len: usize, dx: &[f64], boundary_w: f64) -> f64 {
     (sum - boundary_w).abs()
 }
 
+/// 逐字 ΔX 取值（表46）：DeltaX 不出现时字型在 X 方向**不做偏移**，不能拿字号顶替
+/// ——否则纯 ΔY 定位的文本（竖排/垂直排列）会被斜着排（每字右移一个字号）。
+/// ΔX 数组用尽（畸形文件）沿用末值兜底。
+fn char_dx(delta_x: &[f64], i: usize) -> f64 {
+    if delta_x.is_empty() {
+        0.0
+    } else if i < delta_x.len() {
+        delta_x[i]
+    } else {
+        *delta_x.last().unwrap()
+    }
+}
+
 /// Build SVG text element(s) from an OFD TextObject.
 /// 一个 TextObject 可含多个 TextCode（GB/T 33190 §11.3），每段带独立的 X/Y/ΔX，必须逐段
 /// 输出各自的 <text>；无段对象（测试构造 / 异常文件）退回对象级字段那条路径。
@@ -584,11 +597,7 @@ fn build_svg_text_line(
             let mut x_pos = base_x;
             let mut y_pos = base_y;
             for (i, ch) in seq.iter().enumerate().skip(1) {
-                let dx = if i - 1 < delta_x.len() {
-                    delta_x[i - 1]
-                } else {
-                    *delta_x.last().unwrap_or(&font_size)
-                };
+                let dx = char_dx(delta_x, i - 1);
                 x_pos += dx * scale_x;
                 let dy = if i - 1 < delta_y.len() {
                     delta_y[i - 1]
@@ -627,11 +636,7 @@ fn build_svg_text_line(
         let mut x_pos = base_x;
         let mut y_pos = base_y;
         for (i, ch) in seq.iter().enumerate().skip(1) {
-            let dx = if i - 1 < delta_x.len() {
-                delta_x[i - 1]
-            } else {
-                *delta_x.last().unwrap_or(&font_size)
-            };
+            let dx = char_dx(delta_x, i - 1);
             x_pos += dx * scale_x;
             let dy = if i - 1 < delta_y.len() {
                 delta_y[i - 1]
@@ -880,8 +885,10 @@ fn parse_ofd_content(xml: &str) -> (Vec<OfdTextObject>, Vec<OfdPathObject>, Vec<
                         in_text_code = true;
                         if let Some(ref mut t) = current_text {
                             let mut seg = OfdTextSegment::default();
-                            if let Some(v) = attr_val(&e, "X") { seg.text_x = v.parse().unwrap_or(0.0); }
-                            if let Some(v) = attr_val(&e, "Y") { seg.text_y = v.parse().unwrap_or(0.0); }
+                            // 表46：X/Y 不出现时沿用上一个 TextCode 的坐标（对象内首个 TextCode 必需；
+                            // 镜像字段 t.text_x/t.text_y 即上一个已解析 TextCode 的坐标）
+                            seg.text_x = attr_val(&e, "X").and_then(|v| v.parse().ok()).unwrap_or(t.text_x);
+                            seg.text_y = attr_val(&e, "Y").and_then(|v| v.parse().ok()).unwrap_or(t.text_y);
                             if let Some(v) = attr_val(&e, "DeltaX") {
                                 seg.delta_x = parse_delta_values(&v);
                             }
@@ -3286,6 +3293,35 @@ mod tests {
         assert_eq!(svg.matches("<tspan").count(), 2);
         assert!(svg.contains(">A</tspan>") && svg.contains(">B</tspan>"));
         assert!(!svg.contains("> </tspan>"), "空格不应渲染为字形");
+    }
+
+    #[test]
+    fn test_ofd_deltax_missing_keeps_x_fixed() {
+        // 表46：DeltaX 不出现时字型在 X 方向不做偏移。纯 ΔY 定位（竖排/垂直）文本此前
+        // 因 ΔX 为空被 font_size 顶替 → 每字右移一个字号、斜着排；现应 x 不动、y 递增
+        let mut t = ofd_text("ABC", 3.175, 3.175, vec![], None);
+        t.delta_y = vec![3.175, 3.175];
+        let svg = build_svg_text(&t, &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+        assert_eq!(svg.matches("<tspan").count(), 3);
+        assert_eq!(svg.matches("x=\"0.0000\"").count(), 3, "ΔX 缺省时 x 不应推进: {svg}");
+        assert!(svg.contains("y=\"3.1750\"") && svg.contains("y=\"6.3500\""), "ΔY 应逐字递增: {svg}");
+    }
+
+    #[test]
+    fn test_ofd_textcode_inherits_prev_xy() {
+        // 表46：X/Y 不出现时沿用上一个 TextCode 的坐标（对象内首个 TextCode 必需）
+        let xml = r#"<ofd:Content xmlns:ofd="http://www.ofdspec.org/2016"><ofd:Layer>
+            <ofd:TextObject ID="9" Font="1" Size="3.175" Boundary="10 20 100 10">
+                <ofd:TextCode X="7" Y="5" DeltaX="3.175 3.175 3.175">2025</ofd:TextCode>
+                <ofd:TextCode DeltaX="3.175 3.175">年1月</ofd:TextCode>
+            </ofd:TextObject>
+        </ofd:Layer></ofd:Content>"#;
+        let (texts, _, _) = parse_ofd_content(xml);
+        assert_eq!(texts[0].segments.len(), 2);
+        assert_eq!(texts[0].segments[1].text_x, 7.0, "缺省 X 沿用上一个 TextCode 的 X");
+        assert_eq!(texts[0].segments[1].text_y, 5.0, "缺省 Y 沿用上一个 TextCode 的 Y");
+        let svg = build_svg_text(&texts[0], &HashMap::new(), &HashMap::new(), 1.0, 1.0);
+        assert!(svg.contains("<text x=\"17\""), "段 2 用继承坐标（7 + Boundary 10）: {svg}");
     }
 }
 
